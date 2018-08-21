@@ -132,10 +132,10 @@ contract IPTGlobal is ERC20Interface, Ownable {
     //Base unlocking numerator used to calculate fractional percentage of 0.2 %
     uint8   internal constant unlockingNumerator = 10;
     
-    //Tracks latest/daily unlocked tokens
-    uint256 public unlockedTokensDaily;
-    //Tracks total unlocked tokens
-    uint256 public unlockedTokensTotal;
+    //Allows admin to call a getter which tracks latest/daily unlocked tokens
+    uint256 private unlockedTokensDaily;
+    //Allows admin to call a getter which tracks total unlocked tokens
+    uint256 private unlockedTokensTotal;
     
     address[] uniqueLockedTokenReceivers; 
     
@@ -169,7 +169,7 @@ contract IPTGlobal is ERC20Interface, Ownable {
         uint256 lockedTokenBalance);
         
     event TokensUnlocked(
-        address owner,
+        address recipient,
         uint256 unlockedTokens,
         uint256 lockedTokenBalance);
         
@@ -225,29 +225,30 @@ contract IPTGlobal is ERC20Interface, Ownable {
 
     /**
      * @dev allows owner to change the locked balance of a recipient manually.
-     * @param _recipient is the address of the locked token balance to unlock.
+     * @param _owner is the address of the locked token balance to unlock.
      * @param _unlockedTokens is the amount of locked tokens to unlock.
      */
-    function changeLockedBalanceManually(address _recipient, uint256 _unlockedTokens) external onlyOwner {
-        require(_recipient != address(0));
-        require(_unlockedTokens <= lockedTokenBalance[_recipient]);
-        require(isHoldingLockedTokens[_recipient]);
-        require(!excludedFromTokenUnlock[_recipient]);
+    function changeLockedBalanceManually(address _owner, uint256 _unlockedTokens) external onlyOwner {
+        require(_owner != address(0));
+        require(_unlockedTokens <= lockedTokenBalance[_owner]);
+        require(isHoldingLockedTokens[_owner]);
+        require(!excludedFromTokenUnlock[_owner]);
         
-        lockedTokenBalance[_recipient] = lockedTokenBalance[_recipient].sub(_unlockedTokens);
-        emit LockedTokenBalanceChanged(_recipient, _unlockedTokens, lockedTokenBalance[_recipient]);
+        lockedTokenBalance[_owner] = lockedTokenBalance[_owner].sub(_unlockedTokens);
+        emit LockedTokenBalanceChanged(_owner, _unlockedTokens, lockedTokenBalance[_owner]);
         
         unlockedTokensDaily  = unlockedTokensDaily.add(_unlockedTokens);
         unlockedTokensTotal  = unlockedTokensTotal.add(_unlockedTokens);
         
-        if (lockedTokenBalance[_recipient] == 0) {
-           isHoldingLockedTokens[_recipient] = false;
-           emit CompleteTokenBalanceUnlocked(_recipient, lockedTokenBalance[_recipient], isHoldingLockedTokens[_recipient], true);
+        if (lockedTokenBalance[_owner] == 0) {
+           isHoldingLockedTokens[_owner] = false;
+           emit CompleteTokenBalanceUnlocked(_owner, lockedTokenBalance[_owner], isHoldingLockedTokens[_owner], true);
         }
     }
 
     /**
-     * @dev allows owner to unlock 0.2% of locked token balances 
+     * @dev allows owner to unlock 0.2% of locked token balances, be careful with implementation of 
+     * loops over large arrays, could result in block limit issues.
      * should be called once a day as per specifications.
      */
     function unlockTokens() external onlyOwner {
@@ -258,8 +259,9 @@ contract IPTGlobal is ERC20Interface, Ownable {
                 
                 uint256 unlockedTokens = (lockedTokenBalance[uniqueLockedTokenReceivers[i]].mul(unlockingValue).div(unlockingNumerator)).div(100);
                 lockedTokenBalance[uniqueLockedTokenReceivers[i]] = lockedTokenBalance[uniqueLockedTokenReceivers[i]].sub(unlockedTokens);
+                uint256 unlockedTokensToday = unlockedTokensToday.add(unlockedTokens);
                 
-                emit TokensUnlocked(msg.sender, unlockedTokens, lockedTokenBalance[uniqueLockedTokenReceivers[i]]);
+                emit TokensUnlocked(uniqueLockedTokenReceivers[i], unlockedTokens, lockedTokenBalance[uniqueLockedTokenReceivers[i]]);
             }
             if (lockedTokenBalance[uniqueLockedTokenReceivers[i]] == 0) {
                 isHoldingLockedTokens[uniqueLockedTokenReceivers[i]] = false;
@@ -267,7 +269,7 @@ contract IPTGlobal is ERC20Interface, Ownable {
                 emit CompleteTokenBalanceUnlocked(uniqueLockedTokenReceivers[i], lockedTokenBalance[uniqueLockedTokenReceivers[i]], isHoldingLockedTokens[uniqueLockedTokenReceivers[i]], true);
             }  
         }    
-        unlockedTokensDaily  = unlockedTokens;
+        unlockedTokensDaily  = unlockedTokensToday;
         unlockedTokensTotal  = unlockedTokensTotal.add(unlockedTokensDaily);
     }
     
@@ -293,19 +295,17 @@ contract IPTGlobal is ERC20Interface, Ownable {
         for (uint256 i = 0; i < _excludedRecipients.length; i++) {
             excludedFromTokenUnlock[_excludedRecipients[i]] = false;
             emit ExcludedFromTokenUnlocks(_excludedRecipients[i], excludedFromTokenUnlock[_excludedRecipients[i]]);
-
-
         }
         return true;
     }
     
     /**
      * @dev allows anyone to check the unlocked and locked token balance of a recipient. 
-     * @param _recipient is the address of the locked token balance to check.
+     * @param _owner is the address of the locked token balance to check.
      * @return a uint256 representing the locked and unlocked token balances.
      */
-    function checkTokenBalanceState(address _recipient) external view returns(uint256 unlockedBalance, uint256 lockedBalance) {
-    return (balanceOf(_recipient).sub(lockedTokenBalance[_recipient]), lockedTokenBalance[_recipient]);
+    function checkTokenBalanceState(address _owner) external view returns(uint256 unlockedBalance, uint256 lockedBalance) {
+    return (balanceOf(_owner).sub(lockedTokenBalance[_owner]), lockedTokenBalance[_owner]);
     }
     
     /**
@@ -314,6 +314,14 @@ contract IPTGlobal is ERC20Interface, Ownable {
      */
     function checkUniqueLockedTokenReceivers() external view returns (address[]) {
         return uniqueLockedTokenReceivers;
+    }
+    
+     /**
+     * @dev allows checking of the daily and total amount of unlocked tokens. 
+     * @return an uint representing the daily and total unlocked value.
+     */
+    function checkUnlockedTokensData() external view returns (uint256 unlockedDaily, uint256 unlockedTotal) {
+        return (unlockedTokensDaily, unlockedTokensTotal);
     }
 
     /**
